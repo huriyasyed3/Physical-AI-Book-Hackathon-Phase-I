@@ -1,0 +1,527 @@
+---
+sidebar_position: 4
+title: "Sensor Simulation for Realistic Perception"
+---
+
+# Lesson 3: Sensor Simulation for Realistic Perception
+
+## Overview
+
+This lesson focuses on simulating various sensors for realistic perception in Physical AI systems. We'll cover LiDAR, depth cameras, IMUs, and other sensors essential for Physical AI applications, ensuring accurate simulation for effective AI training and testing.
+
+## Learning Objectives
+
+By the end of this lesson, you will be able to:
+- Simulate LiDAR sensors with realistic characteristics
+- Implement depth camera simulation for 3D perception
+- Model IMU sensors for orientation and acceleration
+- Validate sensor data quality and accuracy
+- Integrate simulated sensors with ROS 2
+
+## Introduction to Sensor Simulation
+
+Sensor simulation is critical for Physical AI because:
+
+1. **Training Data**: Generate large amounts of labeled data for AI training
+2. **Safety**: Test sensor-dependent behaviors in safe virtual environments
+3. **Cost Reduction**: Eliminate the need for expensive physical sensors during development
+4. **Repeatability**: Create consistent testing conditions
+5. **Edge Cases**: Simulate rare or dangerous scenarios safely
+
+## LiDAR Simulation
+
+### LiDAR Physics and Characteristics
+
+LiDAR (Light Detection and Ranging) sensors emit laser pulses and measure the time to return:
+
+```csharp
+public class LiDARSimulator : MonoBehaviour
+{
+    [Header("LiDAR Configuration")]
+    public int horizontalResolution = 64;  // Number of lasers vertically
+    public int verticalResolution = 360;   // Number of horizontal points
+    public float maxRange = 100.0f;        // Maximum detection range
+    public float minRange = 0.1f;          // Minimum detection range
+    public float fovVertical = 30.0f;      // Vertical field of view
+    public float scanFrequency = 10.0f;    // Scans per second
+
+    private float[,] pointCloud;           // 2D array for point cloud data
+    private float[,] intensities;          // Intensity values
+
+    void SimulateLidarScan()
+    {
+        float verticalAngleStep = fovVertical / (horizontalResolution - 1);
+
+        for (int v = 0; v < horizontalResolution; v++)
+        {
+            float verticalAngle = -fovVertical / 2 + v * verticalAngleStep;
+
+            for (int h = 0; h < verticalResolution; h++)
+            {
+                float horizontalAngle = h * (360.0f / verticalResolution);
+
+                // Calculate ray direction
+                Vector3 direction = CalculateRayDirection(horizontalAngle, verticalAngle);
+
+                // Perform raycast
+                RaycastHit hit;
+                if (Physics.Raycast(transform.position, direction, out hit, maxRange))
+                {
+                    // Store point cloud data
+                    pointCloud[v, h] = hit.distance;
+                    intensities[v, h] = CalculateIntensity(hit);
+                }
+                else
+                {
+                    pointCloud[v, h] = float.MaxValue;  // No return
+                    intensities[v, h] = 0.0f;
+                }
+            }
+        }
+
+        // Publish to ROS
+        PublishLidarData();
+    }
+
+    Vector3 CalculateRayDirection(float hAngle, float vAngle)
+    {
+        // Convert angles to direction vector
+        float hRad = hAngle * Mathf.Deg2Rad;
+        float vRad = vAngle * Mathf.Deg2Rad;
+
+        Vector3 direction = new Vector3(
+            Mathf.Cos(vRad) * Mathf.Cos(hRad),
+            Mathf.Cos(vRad) * Mathf.Sin(hRad),
+            Mathf.Sin(vRad)
+        );
+
+        return transform.TransformDirection(direction);
+    }
+
+    float CalculateIntensity(RaycastHit hit)
+    {
+        // Calculate intensity based on material properties
+        // This can include reflectivity, distance, angle of incidence
+        float baseIntensity = 1.0f;
+        float distanceFactor = Mathf.Clamp01(1.0f - (hit.distance / maxRange));
+        return baseIntensity * distanceFactor;
+    }
+}
+```
+
+### Noise and Distortion Modeling
+
+Real LiDAR sensors have noise characteristics:
+
+```csharp
+public class LiDARNoiseModel
+{
+    public float rangeNoiseStdDev = 0.02f;  // 2cm standard deviation
+    public float intensityNoiseStdDev = 0.1f;
+
+    public float AddRangeNoise(float trueRange)
+    {
+        // Add Gaussian noise to range measurements
+        float noise = UnityEngine.Random.normalvariate(0, rangeNoiseStdDev);
+        return Mathf.Max(trueRange + noise, 0.0f);
+    }
+
+    public float AddIntensityNoise(float trueIntensity)
+    {
+        // Add noise to intensity measurements
+        float noise = UnityEngine.Random.normalvariate(0, intensityNoiseStdDev);
+        return Mathf.Clamp01(trueIntensity + noise);
+    }
+}
+```
+
+## Depth Camera Simulation
+
+### Depth Camera Implementation
+
+Depth cameras provide 3D information crucial for navigation and manipulation:
+
+```csharp
+public class DepthCameraSimulator : MonoBehaviour
+{
+    [Header("Depth Camera Configuration")]
+    public Camera depthCamera;
+    public int width = 640;
+    public int height = 480;
+    public float maxDepth = 10.0f;
+    public float minDepth = 0.1f;
+
+    private RenderTexture depthTexture;
+    private float[,] depthData;
+
+    void Start()
+    {
+        SetupDepthCamera();
+    }
+
+    void SetupDepthCamera()
+    {
+        // Create render texture for depth
+        depthTexture = new RenderTexture(width, height, 24);
+        depthTexture.format = RenderTextureFormat.Depth;
+        depthCamera.targetTexture = depthTexture;
+
+        // Initialize depth data array
+        depthData = new float[height, width];
+    }
+
+    void CaptureDepthFrame()
+    {
+        // Render depth to texture
+        depthCamera.Render();
+
+        // Read depth data from texture
+        RenderTexture.active = depthTexture;
+        Texture2D depthTex = new Texture2D(width, height, TextureFormat.RFloat, false);
+        depthTex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+        depthTex.Apply();
+
+        // Convert to depth values
+        Color[] pixels = depthTex.GetPixels();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int idx = y * width + x;
+                float rawDepth = pixels[idx].r;
+
+                // Convert from normalized device coordinates to actual depth
+                float actualDepth = ConvertRawToActualDepth(rawDepth);
+                depthData[y, x] = actualDepth;
+            }
+        }
+
+        // Clean up
+        DestroyImmediate(depthTex);
+
+        // Publish to ROS
+        PublishDepthData();
+    }
+
+    float ConvertRawToActualDepth(float rawDepth)
+    {
+        // Convert normalized depth to actual distance
+        return rawDepth * maxDepth;
+    }
+}
+```
+
+### RGB-D Integration
+
+Combine RGB and depth data for rich perception:
+
+```csharp
+public class RGBDSimulator : MonoBehaviour
+{
+    public Camera rgbCamera;
+    public DepthCameraSimulator depthSimulator;
+
+    void CaptureRGBDFrame()
+    {
+        // Capture RGB frame
+        Texture2D rgbTexture = CaptureRGBFrame();
+
+        // Capture depth frame
+        depthSimulator.CaptureDepthFrame();
+        float[,] depthData = depthSimulator.GetDepthData();
+
+        // Create point cloud from RGB-D data
+        Vector3[,] pointCloud = CreatePointCloud(rgbTexture, depthData);
+
+        // Publish synchronized RGB and depth data
+        PublishRGBDData(rgbTexture, depthData, pointCloud);
+    }
+
+    Vector3[,] CreatePointCloud(Texture2D rgb, float[,] depth)
+    {
+        int width = rgb.width;
+        int height = rgb.height;
+        Vector3[,] points = new Vector3[height, width];
+
+        // Get camera intrinsic parameters
+        float fx = width / (2.0f * Mathf.Tan(rgbCamera.fieldOfView * Mathf.Deg2Rad / 2.0f));
+        float fy = fx;  // Assume square pixels
+        float cx = width / 2.0f;
+        float cy = height / 2.0f;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                float z = depth[y, x];
+                if (z > 0 && z < depthSimulator.maxDepth)
+                {
+                    float x3d = (x - cx) * z / fx;
+                    float y3d = (y - cy) * z / fy;
+                    points[y, x] = new Vector3(x3d, -y3d, z);
+                }
+                else
+                {
+                    points[y, x] = Vector3.zero;  // Invalid point
+                }
+            }
+        }
+
+        return points;
+    }
+}
+```
+
+## IMU Simulation
+
+### IMU Physics and Characteristics
+
+IMUs measure orientation, angular velocity, and linear acceleration:
+
+```csharp
+[System.Serializable]
+public struct IMUData
+{
+    public Vector3 orientation;      // Euler angles (roll, pitch, yaw)
+    public Vector3 angularVelocity;  // Angular velocity (rad/s)
+    public Vector3 linearAcceleration; // Linear acceleration (m/s²)
+    public float timestamp;
+}
+
+public class IMUSimulator : MonoBehaviour
+{
+    [Header("IMU Configuration")]
+    public float sampleRate = 100.0f;  // Hz
+    public float orientationNoise = 0.01f;  // rad
+    public float angularVelocityNoise = 0.001f;  // rad/s
+    public float linearAccelerationNoise = 0.01f;  // m/s²
+
+    private float lastSampleTime;
+    private IMUData lastIMUData;
+
+    void Update()
+    {
+        if (Time.time - lastSampleTime >= 1.0f / sampleRate)
+        {
+            SimulateIMU();
+            lastSampleTime = Time.time;
+        }
+    }
+
+    void SimulateIMU()
+    {
+        IMUData data = new IMUData();
+
+        // Get true values from Unity's physics
+        data.orientation = transform.eulerAngles * Mathf.Deg2Rad;
+        data.angularVelocity = GetAngularVelocity();
+        data.linearAcceleration = GetLinearAcceleration();
+        data.timestamp = Time.time;
+
+        // Add noise to simulate real sensor characteristics
+        data = AddNoise(data);
+
+        // Publish to ROS
+        PublishIMUData(data);
+
+        lastIMUData = data;
+    }
+
+    Vector3 GetAngularVelocity()
+    {
+        // Calculate angular velocity from rotation changes
+        // This requires tracking rotation over time
+        Rigidbody rb = GetComponent<Rigidbody>();
+        return rb ? rb.angularVelocity : Vector3.zero;
+    }
+
+    Vector3 GetLinearAcceleration()
+    {
+        // Calculate linear acceleration from velocity changes
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb)
+        {
+            // In simulation, we might need to track this manually
+            // since Unity doesn't directly provide acceleration
+            return Physics.gravity + rb.velocity;  // Simplified
+        }
+        return Physics.gravity;  // Gravity-only when not moving
+    }
+
+    IMUData AddNoise(IMUData data)
+    {
+        data.orientation += new Vector3(
+            Random.Range(-orientationNoise, orientationNoise),
+            Random.Range(-orientationNoise, orientationNoise),
+            Random.Range(-orientationNoise, orientationNoise)
+        );
+
+        data.angularVelocity += new Vector3(
+            Random.Range(-angularVelocityNoise, angularVelocityNoise),
+            Random.Range(-angularVelocityNoise, angularVelocityNoise),
+            Random.Range(-angularVelocityNoise, angularVelocityNoise)
+        );
+
+        data.linearAcceleration += new Vector3(
+            Random.Range(-linearAccelerationNoise, linearAccelerationNoise),
+            Random.Range(-linearAccelerationNoise, linearAccelerationNoise),
+            Random.Range(-linearAccelerationNoise, linearAccelerationNoise)
+        );
+
+        return data;
+    }
+}
+```
+
+## Multi-Sensor Fusion
+
+### Sensor Integration and Synchronization
+
+Combine data from multiple sensors for comprehensive perception:
+
+```csharp
+public class MultiSensorFusion : MonoBehaviour
+{
+    public LiDARSimulator lidar;
+    public RGBDSimulator rgbd;
+    public IMUSimulator imu;
+
+    void Start()
+    {
+        // Initialize all sensors
+        lidar.enabled = true;
+        rgbd.enabled = true;
+        imu.enabled = true;
+    }
+
+    void Update()
+    {
+        // Synchronize sensor data based on timestamps
+        if (ShouldPublishFrame())
+        {
+            var sensorData = CollectAllSensorData();
+            ProcessFusedData(sensorData);
+        }
+    }
+
+    SensorFusionData CollectAllSensorData()
+    {
+        return new SensorFusionData
+        {
+            lidarPoints = lidar.GetPointCloud(),
+            rgbImage = rgbd.GetRGBImage(),
+            depthImage = rgbd.GetDepthData(),
+            imuData = imu.GetLastIMUData(),
+            timestamp = Time.time
+        };
+    }
+
+    bool ShouldPublishFrame()
+    {
+        // Determine if all required sensors have updated
+        return Time.time - lidar.lastUpdate < 0.1f &&
+               Time.time - rgbd.lastUpdate < 0.1f &&
+               Time.time - imu.lastUpdate < 0.1f;
+    }
+}
+
+[System.Serializable]
+public struct SensorFusionData
+{
+    public float[,] lidarPoints;
+    public Texture2D rgbImage;
+    public float[,] depthImage;
+    public IMUData imuData;
+    public float timestamp;
+}
+```
+
+## ROS 2 Integration
+
+### Publishing Sensor Data to ROS
+
+Publish simulated sensor data to ROS 2 topics:
+
+```csharp
+using ROS2;
+using Unity.Robotics.UGV;
+
+public class SensorROSPublisher : MonoBehaviour
+{
+    ROSConnection ros;
+    float publishRate = 10.0f;  // Hz
+    float lastPublishTime;
+
+    void Start()
+    {
+        ros = ROSConnection.GetOrCreateInstance();
+
+        // Register publishers for different sensor types
+        ros.RegisterPublisher<PointCloud2Msg>("lidar_points");
+        ros.RegisterPublisher<ImageMsg>("camera/rgb/image_raw");
+        ros.RegisterPublisher<ImageMsg>("camera/depth/image_raw");
+        ros.RegisterPublisher<ImuMsg>("imu/data");
+    }
+
+    void Update()
+    {
+        if (Time.time - lastPublishTime >= 1.0f / publishRate)
+        {
+            PublishAllSensorData();
+            lastPublishTime = Time.time;
+        }
+    }
+
+    void PublishAllSensorData()
+    {
+        // Publish LiDAR data
+        PublishLidarData();
+
+        // Publish camera data
+        PublishCameraData();
+
+        // Publish IMU data
+        PublishIMUData();
+    }
+
+    void PublishLidarData()
+    {
+        // Convert Unity point cloud to ROS PointCloud2 message
+        PointCloud2Msg msg = CreatePointCloud2Message();
+        ros.Publish("lidar_points", msg);
+    }
+
+    void PublishCameraData()
+    {
+        // Convert Unity textures to ROS Image messages
+        ImageMsg rgbMsg = CreateImageMessage(rgbTexture);
+        ros.Publish("camera/rgb/image_raw", rgbMsg);
+
+        ImageMsg depthMsg = CreateImageMessage(depthTexture);
+        ros.Publish("camera/depth/image_raw", depthMsg);
+    }
+
+    void PublishIMUData()
+    {
+        // Convert Unity IMU data to ROS IMU message
+        ImuMsg msg = CreateImuMessage();
+        ros.Publish("imu/data", msg);
+    }
+}
+```
+
+## Hands-on Activity: Complete Sensor Simulation
+
+1. Implement a complete sensor simulation setup with LiDAR, RGB-D camera, and IMU
+2. Add realistic noise models to each sensor
+3. Create a simple environment with objects to sense
+4. Verify that sensor data is published correctly to ROS topics
+5. Visualize the sensor data in RViz
+
+## Summary
+
+Sensor simulation is fundamental to Physical AI development, providing realistic perception data for AI training and testing. By accurately modeling sensor characteristics, noise, and integration, we can create effective digital twins for Physical AI systems.
+
+## Next Steps
+
+In the next chapter, we'll explore the AI-Robot Brain using NVIDIA Isaac for advanced perception and training.

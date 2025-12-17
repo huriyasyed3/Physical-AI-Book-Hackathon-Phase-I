@@ -1,0 +1,799 @@
+---
+sidebar_position: 4
+title: "Capstone Project: The Autonomous Humanoid"
+---
+
+# Lesson 3: Capstone Project: The Autonomous Humanoid
+
+## Overview
+
+This capstone lesson integrates all concepts learned throughout the course to create an Autonomous Humanoid system. The robot will receive voice commands, plan actions using LLMs, navigate using Isaac Sim and Nav2, and execute complex tasks in both simulated and real-world environments.
+
+## Learning Objectives
+
+By the end of this lesson, you will be able to:
+- Integrate all course components into a complete autonomous system
+- Implement end-to-end Vision-Language-Action pipeline
+- Deploy the system in simulation and prepare for real-world execution
+- Handle complex multi-step tasks with error recovery
+- Evaluate and optimize the complete autonomous humanoid system
+
+## Introduction to the Autonomous Humanoid System
+
+The Autonomous Humanoid system combines all the technologies learned in this course:
+
+1. **Voice Recognition**: OpenAI Whisper for natural language commands
+2. **Cognitive Planning**: LLMs for task decomposition and action planning
+3. **Perception**: Isaac Sim and ROS 2 for environment understanding
+4. **Navigation**: Nav2 with humanoid-specific modifications
+5. **Control**: Humanoid-specific controllers and actuators
+6. **Integration**: ROS 2 for system coordination
+
+## System Architecture
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Autonomous Humanoid                      │
+├─────────────────────────────────────────────────────────────────┤
+│  Voice Interface    │ Cognitive Planning │ Action Execution     │
+│  ┌────────────────┐ │ ┌────────────────┐ │ ┌────────────────┐   │
+│  │ Whisper        │ │ │ LLM Planner    │ │ │ ROS 2 Executor │   │
+│  │ Recognition    │ │ │                │ │ │                │   │
+│  └────────────────┘ │ └────────────────┘ │ └────────────────┘   │
+│         │                    │                      │           │
+│         ▼                    ▼                      ▼           │
+│  ┌────────────────┐ │ ┌────────────────┐ │ ┌────────────────┐   │
+│  │ Voice Commands │ │ │ Action Plans   │ │ │ Robot Actions  │   │
+│  └────────────────┘ │ └────────────────┘ │ └────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────────┐
+                    │ Environment         │
+                    │ Perception &        │
+                    │ Navigation System   │
+                    └─────────────────────┘
+```
+
+### Complete System Components
+
+```python
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String, Bool
+from sensor_msgs.msg import Image, LaserScan
+from geometry_msgs.msg import Twist, PoseStamped
+from builtin_interfaces.msg import Time
+import asyncio
+import threading
+import queue
+from typing import Dict, Any, Optional
+
+class AutonomousHumanoidNode(Node):
+    def __init__(self):
+        super().__init__('autonomous_humanoid')
+
+        # Initialize all subsystems
+        self.voice_recognizer = self.initialize_voice_system()
+        self.cognitive_planner = self.initialize_cognitive_planner()
+        self.vision_system = self.initialize_vision_system()
+        self.navigation_system = self.initialize_navigation_system()
+        self.action_executor = self.initialize_action_executor()
+
+        # Publishers and subscribers
+        self.voice_cmd_pub = self.create_publisher(String, '/voice_command', 10)
+        self.action_plan_pub = self.create_publisher(String, '/action_plan', 10)
+        self.status_pub = self.create_publisher(String, '/system_status', 10)
+
+        self.voice_sub = self.create_subscription(String, '/voice_command', self.voice_callback, 10)
+        self.perception_sub = self.create_subscription(Image, '/camera/rgb/image_raw', self.perception_callback, 10)
+
+        # System state
+        self.system_state = {
+            'is_active': False,
+            'current_task': None,
+            'task_queue': queue.Queue(),
+            'system_memory': {},
+            'error_recovery_active': False
+        }
+
+        # Start main system loop
+        self.system_loop_thread = threading.Thread(target=self.system_loop, daemon=True)
+        self.system_loop_thread.start()
+
+        self.get_logger().info("Autonomous Humanoid System initialized")
+
+    def initialize_voice_system(self):
+        """Initialize voice recognition system"""
+        from voice_command_node import VoiceCommandNode
+        return VoiceCommandNode()
+
+    def initialize_cognitive_planner(self):
+        """Initialize cognitive planning system"""
+        from cognitive_planner import ContextAwarePlanner
+        return ContextAwarePlanner(api_key=self.get_parameter('openai_api_key').value)
+
+    def initialize_vision_system(self):
+        """Initialize vision system"""
+        # This would interface with Isaac Sim or other vision systems
+        return None
+
+    def initialize_navigation_system(self):
+        """Initialize navigation system"""
+        # This would interface with Nav2
+        return None
+
+    def initialize_action_executor(self):
+        """Initialize action execution system"""
+        from action_executor_node import ActionExecutorNode
+        return ActionExecutorNode()
+
+    def voice_callback(self, msg):
+        """Handle incoming voice commands"""
+        command = msg.data
+        self.get_logger().info(f"Received voice command: {command}")
+
+        # Add to task queue for processing
+        self.system_state['task_queue'].put({
+            'type': 'voice_command',
+            'command': command,
+            'timestamp': self.get_clock().now().to_msg()
+        })
+
+    def perception_callback(self, msg):
+        """Handle incoming perception data"""
+        # Process perception data
+        pass
+
+    def system_loop(self):
+        """Main system processing loop"""
+        while rclpy.ok():
+            try:
+                # Check for new tasks
+                if not self.system_state['task_queue'].empty():
+                    task = self.system_state['task_queue'].get()
+                    self.process_task(task)
+
+                # Update system status
+                self.update_system_status()
+
+                # Small delay to prevent busy waiting
+                time.sleep(0.1)
+
+            except Exception as e:
+                self.get_logger().error(f"Error in system loop: {e}")
+                time.sleep(1.0)  # Longer delay on error
+
+    def process_task(self, task: Dict[str, Any]):
+        """Process a task through the complete pipeline"""
+        task_type = task['type']
+
+        if task_type == 'voice_command':
+            asyncio.run(self.process_voice_command(task['command'], task['timestamp']))
+
+    async def process_voice_command(self, command: str, timestamp: Time):
+        """Process a voice command through the complete pipeline"""
+        try:
+            # 1. Update system status
+            self.publish_status("Processing voice command")
+
+            # 2. Get current context (robot state, environment, memory)
+            context = await self.get_current_context()
+
+            # 3. Plan actions using cognitive planner
+            self.publish_status("Planning actions")
+            action_plan = await self.cognitive_planner.plan_with_context(command, context)
+
+            if not action_plan:
+                self.get_logger().error("Failed to generate action plan")
+                self.publish_status("Planning failed")
+                return
+
+            # 4. Validate and optimize plan
+            optimized_plan = await self.validate_and_optimize_plan(action_plan, context)
+
+            # 5. Execute the plan
+            self.publish_status("Executing plan")
+            execution_result = await self.execute_plan(optimized_plan)
+
+            # 6. Update memory with results
+            self.update_memory({
+                'command': command,
+                'plan': optimized_plan,
+                'result': execution_result,
+                'timestamp': timestamp
+            })
+
+            self.publish_status("Task completed successfully" if execution_result else "Task failed")
+
+        except Exception as e:
+            self.get_logger().error(f"Error processing voice command: {e}")
+            self.handle_error(e, command)
+
+    async def get_current_context(self) -> Dict[str, Any]:
+        """Get current system context"""
+        # Get robot state
+        robot_state = await self.get_robot_state()
+
+        # Get environment state
+        environment_state = await self.get_environment_state()
+
+        # Get system memory
+        memory_state = self.system_state['system_memory']
+
+        return {
+            'robot_state': robot_state,
+            'environment_state': environment_state,
+            'memory_state': memory_state,
+            'timestamp': self.get_clock().now().to_msg()
+        }
+
+    async def get_robot_state(self) -> Dict[str, Any]:
+        """Get current robot state"""
+        # This would interface with the robot's state
+        return {
+            'position': {'x': 0.0, 'y': 0.0, 'theta': 0.0},
+            'battery_level': 85.0,
+            'gripper_status': 'open',
+            'current_task': self.system_state['current_task']
+        }
+
+    async def get_environment_state(self) -> Dict[str, Any]:
+        """Get current environment state"""
+        # This would interface with perception systems
+        return {
+            'objects_detected': [],
+            'navigable_areas': [],
+            'obstacles': [],
+            'lighting_conditions': 'normal'
+        }
+
+    async def validate_and_optimize_plan(self, plan: list, context: Dict[str, Any]) -> list:
+        """Validate and optimize the action plan"""
+        # Add safety checks
+        validated_plan = []
+        for action in plan:
+            if await self.is_action_safe(action, context):
+                validated_plan.append(action)
+
+        # Optimize for efficiency
+        optimized_plan = await self.optimize_action_sequence(validated_plan)
+
+        return optimized_plan
+
+    async def is_action_safe(self, action: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """Check if an action is safe to execute"""
+        # Implement safety checks based on action and context
+        return True
+
+    async def optimize_action_sequence(self, plan: list) -> list:
+        """Optimize action sequence for efficiency"""
+        # Implement optimization logic
+        return plan
+
+    async def execute_plan(self, plan: list) -> bool:
+        """Execute the action plan"""
+        try:
+            # Convert plan to ROS message format
+            plan_json = json.dumps([{
+                'action_type': action.action_type,
+                'parameters': action.parameters,
+                'description': action.description,
+                'estimated_duration': action.estimated_duration
+            } for action in plan])
+
+            # Publish plan for execution
+            plan_msg = String()
+            plan_msg.data = plan_json
+            self.action_plan_pub.publish(plan_msg)
+
+            # Wait for execution completion
+            # This would involve monitoring execution status
+            await asyncio.sleep(1.0)  # Placeholder
+
+            return True
+
+        except Exception as e:
+            self.get_logger().error(f"Error executing plan: {e}")
+            return False
+
+    def update_memory(self, data: Dict[str, Any]):
+        """Update system memory"""
+        self.system_state['system_memory'].update(data)
+
+    def publish_status(self, status: str):
+        """Publish system status"""
+        status_msg = String()
+        status_msg.data = status
+        self.status_pub.publish(status_msg)
+
+    def handle_error(self, error: Exception, command: str):
+        """Handle system errors with recovery"""
+        self.get_logger().error(f"System error: {error}")
+        self.publish_status(f"Error: {str(error)}")
+
+        # Activate error recovery if needed
+        if not self.system_state['error_recovery_active']:
+            self.system_state['error_recovery_active'] = True
+            self.activate_error_recovery(error, command)
+
+    def activate_error_recovery(self, error: Exception, command: str):
+        """Activate error recovery procedures"""
+        self.get_logger().info("Activating error recovery procedures")
+
+        # Implement recovery logic
+        # This might involve:
+        # - Returning to safe position
+        # - Requesting human assistance
+        # - Trying alternative approaches
+        # - Logging error for analysis
+
+        self.system_state['error_recovery_active'] = False
+        self.publish_status("Ready")
+```
+
+## Simulation Integration
+
+### Isaac Sim Integration
+
+Integrate with Isaac Sim for realistic simulation:
+
+```python
+import omni
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.utils.prims import get_prim_at_path
+from omni.isaac.range_sensor import _range_sensor
+from omni.isaac.core.utils.viewports import set_camera_view
+import numpy as np
+
+class IsaacSimInterface:
+    def __init__(self):
+        self.world = World(stage_units_in_meters=1.0)
+        self.range_sensor_interface = _range_sensor.acquire_range_sensor_interface()
+
+        # Initialize the simulation world
+        self.setup_simulation_environment()
+
+    def setup_simulation_environment(self):
+        """Set up the Isaac Sim environment"""
+        # Add humanoid robot
+        add_reference_to_stage(
+            usd_path="path/to/humanoid_robot.usd",
+            prim_path="/World/HumanoidRobot"
+        )
+
+        # Add objects and environment
+        self.add_environment_objects()
+
+    def add_environment_objects(self):
+        """Add objects to the simulation environment"""
+        # Add tables, chairs, objects, etc.
+        pass
+
+    def get_robot_state(self):
+        """Get robot state from Isaac Sim"""
+        # Get position, orientation, joint states, etc.
+        robot_prim = get_prim_at_path("/World/HumanoidRobot")
+        position, orientation = robot_prim.get_world_pose()
+
+        return {
+            'position': position,
+            'orientation': orientation,
+            'joint_states': self.get_joint_states(),
+            'sensors': self.get_sensor_data()
+        }
+
+    def execute_action_in_sim(self, action):
+        """Execute an action in Isaac Sim"""
+        if action['action_type'] == 'move_forward':
+            self.move_robot(action['parameters']['distance'])
+        elif action['action_type'] == 'rotate':
+            self.rotate_robot(action['parameters']['angle'])
+        # Add other action types
+
+    def move_robot(self, distance):
+        """Move robot in simulation"""
+        # Implement robot movement in Isaac Sim
+        pass
+
+    def rotate_robot(self, angle):
+        """Rotate robot in simulation"""
+        # Implement robot rotation in Isaac Sim
+        pass
+
+    def get_sensor_data(self):
+        """Get sensor data from Isaac Sim"""
+        # Get data from cameras, LiDAR, IMU, etc.
+        return {
+            'rgb_camera': self.get_rgb_image(),
+            'depth_camera': self.get_depth_image(),
+            'lidar': self.get_lidar_data(),
+            'imu': self.get_imu_data()
+        }
+```
+
+## Real-World Deployment Preparation
+
+### Hardware Integration
+
+Prepare for real-world deployment:
+
+```python
+class HardwareInterface:
+    def __init__(self):
+        # Initialize hardware interfaces
+        self.motors = self.initialize_motors()
+        self.sensors = self.initialize_sensors()
+        self.camera = self.initialize_camera()
+        self.microphone = self.initialize_microphone()
+
+    def initialize_motors(self):
+        """Initialize humanoid robot motors"""
+        # Initialize motor controllers for legs, arms, torso
+        return {
+            'left_leg': self.init_motor_controller('left_leg'),
+            'right_leg': self.init_motor_controller('right_leg'),
+            'left_arm': self.init_motor_controller('left_arm'),
+            'right_arm': self.init_motor_controller('right_arm'),
+            'torso': self.init_motor_controller('torso')
+        }
+
+    def initialize_sensors(self):
+        """Initialize sensors"""
+        return {
+            'imu': self.init_imu_sensor(),
+            'force_sensors': self.init_force_sensors(),
+            'joint_encoders': self.init_joint_encoders()
+        }
+
+    def execute_action_on_hardware(self, action):
+        """Execute action on real hardware"""
+        try:
+            if action['action_type'] == 'move_forward':
+                return self.execute_move_forward(action['parameters'])
+            elif action['action_type'] == 'rotate':
+                return self.execute_rotate(action['parameters'])
+            elif action['action_type'] == 'pick_object':
+                return self.execute_pick_object(action['parameters'])
+            # Add other action types
+
+        except Exception as e:
+            self.log_error(f"Hardware execution error: {e}")
+            return False
+
+    def execute_move_forward(self, params):
+        """Execute forward movement on hardware"""
+        # Implement walking gait pattern
+        distance = params['distance']
+        # Calculate number of steps needed
+        step_length = 0.3  # meters per step
+        num_steps = int(distance / step_length)
+
+        for i in range(num_steps):
+            self.take_step('forward')
+            if not self.check_balance():
+                return False
+
+        return True
+
+    def take_step(self, direction):
+        """Take a single step"""
+        # Implement humanoid walking pattern
+        # This involves complex coordination of joints
+        pass
+
+    def check_balance(self):
+        """Check if robot is maintaining balance"""
+        # Check IMU data, joint positions, etc.
+        return True
+
+    def execute_rotate(self, params):
+        """Execute rotation on hardware"""
+        angle = params['angle']
+        direction = params.get('direction', 'left')
+
+        # Implement turning gait
+        pass
+
+    def execute_pick_object(self, params):
+        """Execute object picking on hardware"""
+        object_name = params['object_name']
+
+        # 1. Navigate to object
+        # 2. Position gripper
+        # 3. Execute grasp
+        # 4. Verify success
+        pass
+```
+
+## System Evaluation
+
+### Performance Metrics
+
+Implement evaluation metrics for the autonomous system:
+
+```python
+import time
+import json
+from datetime import datetime
+
+class SystemEvaluator:
+    def __init__(self):
+        self.metrics = {
+            'task_completion_rate': 0.0,
+            'average_execution_time': 0.0,
+            'error_rate': 0.0,
+            'user_satisfaction': 0.0,
+            'navigation_success_rate': 0.0
+        }
+        self.task_history = []
+
+    def evaluate_task_execution(self, task: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, float]:
+        """Evaluate task execution performance"""
+        start_time = task.get('start_time')
+        end_time = result.get('end_time')
+        success = result.get('success', False)
+
+        execution_time = (end_time - start_time).total_seconds() if start_time and end_time else 0
+
+        # Calculate metrics for this task
+        task_metrics = {
+            'execution_time': execution_time,
+            'success': success,
+            'command_understanding_accuracy': self.calculate_command_accuracy(task, result),
+            'action_planning_efficiency': self.calculate_planning_efficiency(task, result),
+            'navigation_accuracy': self.calculate_navigation_accuracy(task, result)
+        }
+
+        # Update overall metrics
+        self.update_overall_metrics(task_metrics)
+
+        # Store task history
+        self.task_history.append({
+            'task': task,
+            'result': result,
+            'metrics': task_metrics,
+            'timestamp': datetime.now()
+        })
+
+        return task_metrics
+
+    def calculate_command_accuracy(self, task: Dict[str, Any], result: Dict[str, Any]) -> float:
+        """Calculate how accurately the command was interpreted and executed"""
+        # Compare expected vs actual behavior
+        # This would involve complex comparison logic
+        return 0.9  # Placeholder
+
+    def calculate_planning_efficiency(self, task: Dict[str, Any], result: Dict[str, Any]) -> float:
+        """Calculate efficiency of action planning"""
+        # Compare planned vs executed actions
+        # Consider number of steps, time taken, etc.
+        return 0.85  # Placeholder
+
+    def calculate_navigation_accuracy(self, task: Dict[str, Any], result: Dict[str, Any]) -> float:
+        """Calculate navigation accuracy"""
+        # Compare planned vs actual navigation paths
+        return 0.95  # Placeholder
+
+    def update_overall_metrics(self, task_metrics: Dict[str, float]):
+        """Update overall system metrics"""
+        # Update averages and rates
+        success_count = sum(1 for t in self.task_history if t['metrics']['success'])
+        self.metrics['task_completion_rate'] = success_count / len(self.task_history) if self.task_history else 0
+
+        if task_metrics['execution_time'] > 0:
+            exec_times = [t['metrics']['execution_time'] for t in self.task_history if t['metrics']['execution_time'] > 0]
+            self.metrics['average_execution_time'] = sum(exec_times) / len(exec_times) if exec_times else 0
+
+    def generate_performance_report(self) -> str:
+        """Generate a comprehensive performance report"""
+        report = f"""
+        Autonomous Humanoid System Performance Report
+        =============================================
+
+        Overall Metrics:
+        - Task Completion Rate: {self.metrics['task_completion_rate']:.2%}
+        - Average Execution Time: {self.metrics['average_execution_time']:.2f}s
+        - Error Rate: {self.metrics['error_rate']:.2%}
+        - Navigation Success Rate: {self.metrics['navigation_success_rate']:.2%}
+
+        Task History (Last 10):
+        """
+
+        for i, task in enumerate(self.task_history[-10:], 1):
+            report += f"  {i}. {task['task'].get('command', 'Unknown')} - "
+            report += f"Success: {task['metrics']['success']}, "
+            report += f"Time: {task['metrics']['execution_time']:.2f}s\n"
+
+        return report
+
+    def save_evaluation_data(self, filename: str = None):
+        """Save evaluation data to file"""
+        if not filename:
+            filename = f"evaluation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        evaluation_data = {
+            'timestamp': datetime.now().isoformat(),
+            'overall_metrics': self.metrics,
+            'task_history': [
+                {
+                    'command': t['task'].get('command'),
+                    'success': t['metrics']['success'],
+                    'execution_time': t['metrics']['execution_time'],
+                    'detailed_metrics': t['metrics']
+                }
+                for t in self.task_history
+            ]
+        }
+
+        with open(filename, 'w') as f:
+            json.dump(evaluation_data, f, indent=2)
+
+        return filename
+```
+
+## Deployment and Testing
+
+### Complete System Launch
+
+Create a launch file for the complete system:
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+import os
+
+def generate_launch_description():
+    # Launch configuration variables
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    openai_api_key = LaunchConfiguration('openai_api_key')
+    isaac_sim_enabled = LaunchConfiguration('isaac_sim_enabled')
+
+    # Declare launch arguments
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='true',
+        description='Use simulation (Isaac Sim) clock if true'
+    )
+
+    declare_openai_api_key = DeclareLaunchArgument(
+        'openai_api_key',
+        default_value='',
+        description='OpenAI API key for cognitive planning'
+    )
+
+    declare_isaac_sim_enabled = DeclareLaunchArgument(
+        'isaac_sim_enabled',
+        default_value='true',
+        description='Enable Isaac Sim integration'
+    )
+
+    # Launch Isaac Sim if enabled
+    isaac_sim_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            FindPackageShare('omni_isaac_ros_bridge'),
+            '/launch',
+            '/omni_isaac_ros_bridge.launch.py'
+        ]),
+        condition=IfCondition(isaac_sim_enabled)
+    )
+
+    # Launch Nav2 stack
+    nav2_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            FindPackageShare('nav2_bringup'),
+            '/launch',
+            '/navigation_launch.py'
+        ]),
+        launch_arguments={
+            'use_sim_time': use_sim_time
+        }.items()
+    )
+
+    # Launch robot state publisher
+    robot_state_publisher = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            FindPackageShare('humanoid_description'),
+            '/launch',
+            '/robot_state_publisher.launch.py'
+        ])
+    )
+
+    # Autonomous Humanoid main node
+    autonomous_humanoid_node = Node(
+        package='autonomous_humanoid',
+        executable='autonomous_humanoid_node',
+        name='autonomous_humanoid',
+        parameters=[
+            {'use_sim_time': use_sim_time},
+            {'openai_api_key': openai_api_key}
+        ],
+        output='screen'
+    )
+
+    # Voice command node
+    voice_command_node = Node(
+        package='voice_recognition',
+        executable='voice_command_node',
+        name='voice_command_node',
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
+
+    # Action execution node
+    action_executor_node = Node(
+        package='action_execution',
+        executable='action_executor_node',
+        name='action_executor',
+        parameters=[{'use_sim_time': use_sim_time}],
+        output='screen'
+    )
+
+    # Create launch description
+    ld = LaunchDescription()
+
+    # Add launch arguments
+    ld.add_action(declare_use_sim_time)
+    ld.add_action(declare_openai_api_key)
+    ld.add_action(declare_isaac_sim_enabled)
+
+    # Add Isaac Sim launch (with delay to allow other systems to start)
+    ld.add_action(TimerAction(
+        period=5.0,
+        actions=[isaac_sim_launch]
+    ))
+
+    # Add Nav2 launch
+    ld.add_action(nav2_launch)
+
+    # Add robot state publisher
+    ld.add_action(robot_state_publisher)
+
+    # Add all nodes
+    ld.add_action(autonomous_humanoid_node)
+    ld.add_action(voice_command_node)
+    ld.add_action(action_executor_node)
+
+    return ld
+```
+
+## Hands-on Activity: Complete System Integration
+
+1. Integrate all the components into a complete autonomous humanoid system
+2. Deploy the system in Isaac Sim environment
+3. Test with various voice commands and scenarios
+4. Evaluate system performance using the metrics framework
+5. Identify and fix any integration issues
+6. Document the complete system architecture and performance
+
+## Summary
+
+The Autonomous Humanoid capstone project demonstrates the integration of all concepts learned throughout the course. By combining voice recognition, cognitive planning, perception, navigation, and control systems, we've created a sophisticated Physical AI system capable of understanding and executing complex natural language commands in both simulated and real-world environments.
+
+This project showcases the convergence of multiple advanced technologies in Physical AI and provides a foundation for further development and real-world deployment.
+
+## Course Conclusion
+
+This course has provided a comprehensive journey through Physical AI and Humanoid Robotics, covering:
+- The foundational concepts of Physical AI systems
+- Simulation environments and digital twins
+- AI-powered perception and navigation
+- Vision-Language-Action integration
+- Complete autonomous system development
+
+You now have the knowledge and tools to develop sophisticated Physical AI systems that bridge the gap between digital intelligence and physical interaction.
+
+## Next Steps
+
+1. Continue developing and refining your autonomous humanoid system
+2. Explore real-world deployment opportunities
+3. Investigate advanced topics like multi-robot coordination
+4. Contribute to the Physical AI research community
+5. Apply these concepts to other Physical AI applications

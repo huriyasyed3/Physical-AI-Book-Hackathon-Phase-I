@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rev-parse:*)",
+      "Bash(mkdir -p \"C:\\Users\\san\\Desktop\\Hackathon-part-one\\specs\\007-docusaurus-ui-ux-upgrade\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

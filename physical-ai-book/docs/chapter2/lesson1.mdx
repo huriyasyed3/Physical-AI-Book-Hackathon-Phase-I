@@ -1,0 +1,159 @@
+---
+sidebar_position: 2
+title: "Physics Simulation Fundamentals"
+---
+
+# Lesson 1: Physics Simulation Fundamentals
+
+## Overview
+
+This lesson introduces the core concepts of physics simulation in the context of Physical AI. We'll explore how to simulate realistic physics, gravity, and collisions in Gazebo, which is essential for creating accurate digital twins of physical systems.
+
+## Learning Objectives
+
+By the end of this lesson, you will be able to:
+- Set up a basic Gazebo simulation environment
+- Configure physics properties including gravity and material properties
+- Create and simulate collisions between objects
+- Understand the importance of realistic physics in Physical AI development
+
+## Introduction to Physics Simulation
+
+Physics simulation is the computational modeling of physical systems to predict their behavior under various conditions. In Physical AI, accurate simulation is crucial because:
+
+1. **Safety**: Test robot behaviors in virtual environments before real-world deployment
+2. **Cost Efficiency**: Reduce the need for expensive physical prototypes
+3. **Repeatability**: Run identical tests multiple times with consistent conditions
+4. **Extensibility**: Test scenarios that might be difficult or dangerous in the real world
+
+## Setting Up Gazebo Environment
+
+### Installation and Basic Setup
+
+First, ensure Gazebo is properly installed and integrated with your ROS 2 environment:
+
+```bash
+# Install Gazebo Garden (or latest stable version)
+sudo apt-get install gazebo-garden
+
+# Verify installation
+gz --version
+```
+
+### Creating Your First Simulation World
+
+Create a basic world file that defines the environment:
+
+```xml
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="physical_ai_world">
+    <!-- Include a default ground plane -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Include sun for lighting -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Define physics properties -->
+    <physics type="ode">
+      <gravity>0 0 -9.8</gravity>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+  </world>
+</sdf>
+```
+
+## Physics Properties in Detail
+
+### Gravity Configuration
+
+Gravity is a fundamental force that affects all objects in your simulation:
+
+```xml
+<gravity>0 0 -9.8</gravity>
+```
+
+This sets gravity to 9.8 m/s² in the negative Z direction (downward), matching Earth's gravity.
+
+### Time Stepping
+
+The physics engine updates the simulation at discrete time steps:
+
+```xml
+<max_step_size>0.001</max_step_size>
+<real_time_factor>1.0</real_time_factor>
+```
+
+- `max_step_size`: Maximum time step in seconds (smaller = more accurate but slower)
+- `real_time_factor`: Desired speed relative to real time (1.0 = real-time)
+
+## Collision Detection and Response
+
+### Collision Properties
+
+Each object in Gazebo has collision properties that determine how it interacts:
+
+```xml
+<collision name="collision">
+  <geometry>
+    <box>
+      <size>1 1 1</size>
+    </box>
+  </geometry>
+  <surface>
+    <friction>
+      <ode>
+        <mu>1.0</mu>
+        <mu2>1.0</mu2>
+      </ode>
+    </friction>
+    <bounce>
+      <restitution_coefficient>0.1</restitution_coefficient>
+      <threshold>100000</threshold>
+    </bounce>
+  </surface>
+</collision>
+```
+
+### Material Properties
+
+Material properties affect how objects interact:
+
+- **Friction coefficients**: Determine how objects slide against each other
+- **Restitution**: Determines "bounciness" of collisions
+- **Density**: Affects mass calculations for realistic physics
+
+## Hands-on Activity: Simple Physics Simulation
+
+Create a simple simulation with a ball dropping onto a plane:
+
+1. Create a world file with a ground plane and gravity
+2. Add a spherical object at a height above the ground
+3. Run the simulation and observe the physics behavior
+4. Adjust parameters (gravity, friction, restitution) to see how they affect the simulation
+
+## Integration with ROS 2
+
+Gazebo integrates with ROS 2 through the Gazebo ROS packages:
+
+```bash
+sudo apt install ros-humble-gazebo-ros-pkgs
+```
+
+This allows you to:
+- Control simulated robots through ROS 2 topics and services
+- Access sensor data through ROS 2 message types
+- Integrate your AI algorithms with the simulation environment
+
+## Summary
+
+Physics simulation is a cornerstone of Physical AI development, enabling safe, cost-effective testing of AI systems before real-world deployment. Understanding how to configure and tune physics properties is essential for creating accurate digital twins.
+
+## Next Steps
+
+In the next lesson, we'll explore Unity integration for high-fidelity rendering and human-robot interaction simulation.

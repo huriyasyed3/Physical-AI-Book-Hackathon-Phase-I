@@ -1,0 +1,674 @@
+---
+sidebar_position: 4
+title: "Nav2 Integration for Bipedal Humanoid Path Planning"
+---
+
+# Lesson 3: Nav2 Integration for Bipedal Humanoid Path Planning
+
+## Overview
+
+This lesson focuses on adapting the Navigation2 (Nav2) stack for bipedal humanoid robots. We'll explore the unique challenges of humanoid navigation and how to configure Nav2 for stable, human-like locomotion patterns.
+
+## Learning Objectives
+
+By the end of this lesson, you will be able to:
+- Configure Nav2 for bipedal humanoid robot characteristics
+- Adapt path planning algorithms for bipedal locomotion
+- Implement dynamic obstacle avoidance for human-like movement
+- Optimize navigation parameters for humanoid stability
+- Integrate with humanoid-specific controllers and simulators
+
+## Introduction to Humanoid Navigation
+
+Bipedal humanoid navigation presents unique challenges compared to wheeled robots:
+
+1. **Stability Requirements**: Humanoid robots must maintain balance during movement
+2. **Footstep Planning**: Navigation must consider discrete footstep placement
+3. **Dynamic Balance**: Continuous adjustment needed for center of mass
+4. **Human-like Motion**: Navigation should appear natural and human-like
+5. **Terrain Adaptation**: Ability to handle stairs, slopes, and uneven terrain
+
+## Nav2 Architecture for Humanoids
+
+### Standard vs. Humanoid Nav2 Configuration
+
+Standard Nav2 is designed for wheeled robots, but can be adapted for humanoids:
+
+```yaml
+# Standard Nav2 configuration for wheeled robot
+amcl:
+  ros__parameters:
+    use_sim_time: True
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha_slowdecay_rate: 0.001
+    alpha_fastdecay_rate: 0.1
+
+# Humanoid-specific Nav2 configuration
+amcl:
+  ros__parameters:
+    use_sim_time: True
+    # Adjusted for humanoid characteristics
+    alpha1: 0.5  # Higher for more rotation uncertainty
+    alpha2: 0.5
+    alpha3: 0.3  # Lower for more linear uncertainty
+    alpha4: 0.3
+    alpha_slowdecay_rate: 0.0005  # Slower for more stable estimates
+    alpha_fastdecay_rate: 0.05
+```
+
+### Humanoid-Specific Parameters
+
+Configure Nav2 for humanoid-specific needs:
+
+```yaml
+# Humanoid navigation parameters
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True
+    global_frame: map
+    robot_base_frame: base_link
+    # Humanoid-specific navigation behavior
+    robot_radius: 0.3  # Larger than typical for humanoid workspace
+    global_radius: 0.5  # Safety margin for humanoid navigation
+    # Behavior tree for humanoid-specific navigation
+    default_nav_to_pose_bt_xml: "humanoid_nav_to_pose.xml"
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    # Humanoid controller parameters
+    controller_frequency: 10.0  # Lower frequency for stable steps
+    min_x_velocity_threshold: 0.05  # Minimum velocity for movement
+    min_y_velocity_threshold: 0.05
+    min_theta_velocity_threshold: 0.1
+    progress_checker:
+      plugin: "progress_checker"
+      required_movement_radius: 0.5  # Larger for humanoid steps
+      movement_time_allowance: 10.0
+    goal_checker:
+      plugin: "goal_checker"
+      xy_goal_tolerance: 0.3  # Larger tolerance for humanoid precision
+      yaw_goal_tolerance: 0.3
+      stateful: True
+```
+
+## Humanoid Path Planning
+
+### Footstep Planning Integration
+
+Integrate footstep planning with Nav2 global planning:
+
+```python
+import rclpy
+from rclpy.node import Node
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped, Point
+from builtin_interfaces.msg import Duration
+from tf2_ros import TransformException
+import numpy as np
+
+class HumanoidPathPlanner(Node):
+    def __init__(self):
+        super().__init__('humanoid_path_planner')
+
+        # Subscribe to global path from Nav2
+        self.path_sub = self.create_subscription(
+            Path, '/plan', self.global_path_callback, 10
+        )
+
+        # Publish footstep plan
+        self.footstep_pub = self.create_publisher(
+            Path, '/footstep_plan', 10
+        )
+
+        # Initialize footstep planner
+        self.footstep_planner = self.initialize_footstep_planner()
+
+    def global_path_callback(self, msg):
+        """Convert global path to footstep plan"""
+        # Convert continuous path to discrete footsteps
+        footstep_path = self.plan_footsteps(msg)
+
+        # Publish footstep plan
+        self.footstep_pub.publish(footstep_path)
+
+    def plan_footsteps(self, global_path):
+        """Generate footstep plan from global path"""
+        footsteps = Path()
+        footsteps.header = global_path.header
+
+        # Plan footsteps along the global path
+        for i in range(0, len(global_path.poses), 2):  # Every 2nd pose for step spacing
+            # Calculate footstep position
+            foot_pose = self.calculate_footstep_pose(
+                global_path.poses[i].pose,
+                i % 2 == 0  # Alternate between left and right foot
+            )
+
+            pose_stamped = PoseStamped()
+            pose_stamped.header = global_path.header
+            pose_stamped.pose = foot_pose
+            footsteps.poses.append(pose_stamped)
+
+        return footsteps
+
+    def calculate_footstep_pose(self, path_pose, is_left_foot):
+        """Calculate pose for next footstep"""
+        # Calculate offset based on foot spacing
+        step_offset = 0.3  # 30cm step length
+        foot_offset = 0.1 if is_left_foot else -0.1  # Lateral foot offset
+
+        # Calculate foot position
+        foot_pose = path_pose
+        foot_pose.position.x += step_offset * np.cos(path_pose.orientation.z)
+        foot_pose.position.y += step_offset * np.sin(path_pose.orientation.z)
+
+        # Add lateral offset for alternating feet
+        if is_left_foot:
+            foot_pose.position.y += foot_offset
+        else:
+            foot_pose.position.y -= foot_offset
+
+        return foot_pose
+```
+
+### Humanoid-Specific Global Planner
+
+Implement a global planner optimized for humanoid navigation:
+
+```python
+from nav2_core.global_planner import GlobalPlanner
+from nav2_costmap_2d.costmap_2d_ros import Costmap2DROS
+from geometry_msgs.msg import PoseStamped, Point
+from nav_msgs.msg import Path
+import numpy as np
+
+class HumanoidGlobalPlanner(GlobalPlanner):
+    def __init__(self):
+        super().__init__()
+        self.initialized = False
+
+    def configure(self, tf_buffer, costmap_ros, node, name):
+        """Configure the planner"""
+        self.name = name
+        self.tf_buffer = tf_buffer
+        self.costmap = costmap_ros
+        self.node = node
+        self.initialized = True
+
+        # Humanoid-specific parameters
+        self.step_length = 0.3  # Average human step length
+        self.foot_width = 0.1   # Foot width for collision checking
+        self.turn_radius = 0.5  # Minimum turning radius for stability
+
+    def create_plan(self, start, goal):
+        """Create path plan optimized for humanoid navigation"""
+        if not self.initialized:
+            self.node.get_logger().error(f'{self.name} has not been initialized')
+            return Path()
+
+        # Convert to local coordinates
+        costmap = self.costmap.get_costmap()
+        start_local = self.transform_pose_to_costmap(start, costmap)
+        goal_local = self.transform_pose_to_costmap(goal, costmap)
+
+        # Plan path with humanoid constraints
+        path = self.plan_humanoid_path(start_local, goal_local, costmap)
+
+        # Transform back to global coordinates
+        global_path = self.transform_path_to_global(path, costmap)
+
+        return global_path
+
+    def plan_humanoid_path(self, start, goal, costmap):
+        """Plan path considering humanoid constraints"""
+        # Use A* or Dijkstra with humanoid-specific cost function
+        path = Path()
+        path.header.frame_id = self.costmap.getGlobalFrameID()
+
+        # Implement humanoid-aware path planning
+        # Consider step size, turning radius, and stability
+        current = start
+        while not self.near_goal(current, goal):
+            next_pose = self.get_next_humanoid_step(current, goal, costmap)
+            path.poses.append(next_pose)
+            current = next_pose
+
+        return path
+
+    def get_next_humanoid_step(self, current, goal, costmap):
+        """Calculate next step considering humanoid constraints"""
+        # Calculate direction to goal
+        direction = np.array([goal.pose.position.x - current.pose.position.x,
+                             goal.pose.position.y - current.pose.position.y])
+        distance = np.linalg.norm(direction)
+
+        if distance < self.step_length:
+            # Goal is close, go directly there
+            return goal
+
+        # Normalize direction and scale to step length
+        direction = direction / distance * self.step_length
+        next_pose = PoseStamped()
+        next_pose.pose.position.x = current.pose.position.x + direction[0]
+        next_pose.pose.position.y = current.pose.position.y + direction[1]
+
+        # Calculate orientation to face direction of movement
+        next_pose.pose.orientation.z = np.arctan2(direction[1], direction[0])
+
+        return next_pose
+```
+
+## Dynamic Obstacle Avoidance
+
+### Humanoid-Specific Local Planner
+
+Configure local planning for humanoid movement:
+
+```python
+from nav2_core.local_planner import LocalPlanner
+from geometry_msgs.msg import Twist, Point
+from sensor_msgs.msg import LaserScan
+from tf2_ros import TransformException
+import numpy as np
+
+class HumanoidLocalPlanner(LocalPlanner):
+    def __init__(self):
+        super().__init__()
+        self.initialized = False
+
+    def configure(self, tf_buffer, costmap_ros, node, name):
+        """Configure local planner for humanoid"""
+        self.name = name
+        self.tf_buffer = tf_buffer
+        self.costmap = costmap_ros
+        self.node = node
+        self.initialized = True
+
+        # Humanoid-specific parameters
+        self.step_time = 0.5  # Time per step
+        self.max_step_velocity = 0.6  # Max step velocity (m/s)
+        self.balance_margin = 0.1     # Safety margin for balance
+
+    def compute_velocity_commands(self, pose, velocity, goal_checker):
+        """Compute velocity commands for humanoid"""
+        if not self.initialized:
+            self.node.get_logger().error(f'{self.name} has not been initialized')
+            return Twist()
+
+        # Get obstacle information
+        obstacles = self.get_obstacles()
+
+        # Calculate safe velocity considering obstacles and balance
+        cmd_vel = Twist()
+        cmd_vel.linear.x = self.calculate_safe_linear_velocity(obstacles)
+        cmd_vel.angular.z = self.calculate_safe_angular_velocity(obstacles)
+
+        # Ensure velocities are within humanoid limits
+        cmd_vel = self.limit_humanoid_velocities(cmd_vel)
+
+        return cmd_vel
+
+    def calculate_safe_linear_velocity(self, obstacles):
+        """Calculate safe linear velocity for humanoid"""
+        # Check for obstacles in path
+        min_distance = float('inf')
+        for obstacle in obstacles:
+            distance = self.calculate_distance_to_obstacle(obstacle)
+            if distance < min_distance:
+                min_distance = distance
+
+        # Adjust velocity based on obstacle distance
+        if min_distance < 1.0:  # 1 meter safety zone
+            # Reduce velocity based on distance
+            velocity = self.max_step_velocity * (min_distance / 1.0)
+        else:
+            velocity = self.max_step_velocity
+
+        return min(velocity, self.max_step_velocity)
+
+    def limit_humanoid_velocities(self, cmd_vel):
+        """Apply humanoid-specific velocity limits"""
+        # Limit linear velocity for stable walking
+        cmd_vel.linear.x = max(min(cmd_vel.linear.x, self.max_step_velocity), -self.max_step_velocity)
+
+        # Limit angular velocity for balance
+        max_angular = 0.5  # rad/s
+        cmd_vel.angular.z = max(min(cmd_vel.angular.z, max_angular), -max_angular)
+
+        return cmd_vel
+```
+
+## Integration with Humanoid Controllers
+
+### ROS Control for Humanoids
+
+Integrate navigation with humanoid-specific controllers:
+
+```python
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Float64MultiArray
+from sensor_msgs.msg import JointState
+from control_msgs.msg import JointTrajectoryControllerState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+class HumanoidNavigationController(Node):
+    def __init__(self):
+        super().__init__('humanoid_navigation_controller')
+
+        # Navigation command subscriber
+        self.cmd_vel_sub = self.create_subscription(
+            Twist, '/cmd_vel', self.cmd_vel_callback, 10
+        )
+
+        # Joint trajectory publisher for walking pattern
+        self.joint_traj_pub = self.create_publisher(
+            JointTrajectory, '/joint_trajectory', 10
+        )
+
+        # Joint state subscriber
+        self.joint_state_sub = self.create_subscription(
+            JointState, '/joint_states', self.joint_state_callback, 10
+        )
+
+        # Initialize humanoid-specific controllers
+        self.left_leg_controller = self.initialize_leg_controller('left_leg')
+        self.right_leg_controller = self.initialize_leg_controller('right_leg')
+        self.torso_controller = self.initialize_torso_controller()
+
+    def cmd_vel_callback(self, msg):
+        """Convert navigation velocity to joint trajectories"""
+        # Convert linear/angular velocities to walking pattern
+        trajectory = self.velocity_to_walk_pattern(msg)
+
+        # Publish joint trajectory
+        self.joint_traj_pub.publish(trajectory)
+
+    def velocity_to_walk_pattern(self, cmd_vel):
+        """Convert velocity command to humanoid walking pattern"""
+        trajectory = JointTrajectory()
+        trajectory.joint_names = [
+            'left_hip', 'left_knee', 'left_ankle',
+            'right_hip', 'right_knee', 'right_ankle',
+            'torso_pitch', 'torso_roll'
+        ]
+
+        # Calculate walking pattern based on desired velocity
+        points = []
+        current_time = 0.0
+        step_duration = 0.5  # seconds per step
+
+        # Generate walking pattern for the next few steps
+        for i in range(10):  # Plan 10 steps ahead
+            point = JointTrajectoryPoint()
+
+            # Calculate joint angles for this step
+            # This would involve inverse kinematics and gait planning
+            left_leg_angles = self.calculate_left_leg_angles(
+                cmd_vel.linear.x, cmd_vel.angular.z, i
+            )
+            right_leg_angles = self.calculate_right_leg_angles(
+                cmd_vel.linear.x, cmd_vel.angular.z, i
+            )
+            torso_angles = self.calculate_torso_angles(
+                cmd_vel.linear.x, cmd_vel.angular.z, i
+            )
+
+            point.positions = (
+                left_leg_angles + right_leg_angles + torso_angles
+            )
+
+            point.time_from_start.sec = int(current_time)
+            point.time_from_start.nanosec = int((current_time % 1) * 1e9)
+
+            points.append(point)
+            current_time += step_duration
+
+        trajectory.points = points
+        return trajectory
+
+    def calculate_left_leg_angles(self, linear_vel, angular_vel, step_num):
+        """Calculate left leg joint angles for walking pattern"""
+        # Implement gait pattern for left leg
+        # This would involve complex inverse kinematics
+        # based on desired velocity and step phase
+        pass
+
+    def calculate_right_leg_angles(self, linear_vel, angular_vel, step_num):
+        """Calculate right leg joint angles for walking pattern"""
+        # Implement gait pattern for right leg
+        # This would be offset from left leg by half a step cycle
+        pass
+
+    def calculate_torso_angles(self, linear_vel, angular_vel, step_num):
+        """Calculate torso angles for balance"""
+        # Calculate torso angles to maintain balance
+        # during walking motion
+        pass
+```
+
+## Simulation and Testing
+
+### Gazebo Humanoid Integration
+
+Set up Gazebo simulation for humanoid navigation testing:
+
+```xml
+<!-- Humanoid robot model with navigation configuration -->
+<?xml version="1.0"?>
+<robot name="humanoid_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Import humanoid base -->
+  <xacro:include filename="$(find humanoid_description)/urdf/humanoid.urdf.xacro" />
+
+  <!-- Navigation sensors -->
+  <link name="lidar_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="torso_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 0.5" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Gazebo plugins for navigation -->
+  <gazebo reference="lidar_link">
+    <sensor type="ray" name="humanoid_laser">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>10.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+      <plugin name="gazebo_ros_laser" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <namespace>humanoid_robot</namespace>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- IMU for balance -->
+  <gazebo reference="torso_link">
+    <sensor name="humanoid_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <visualize>false</visualize>
+      <plugin filename="libgazebo_ros_imu.so" name="gazebo_ros_imu">
+        <ros>
+          <namespace>humanoid_robot</namespace>
+          <remapping>~/out:=imu</remapping>
+        </ros>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+</robot>
+```
+
+### Launch Configuration
+
+Create launch files for humanoid navigation:
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+def generate_launch_description():
+    # Launch configuration variables
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    params_file = LaunchConfiguration('params_file')
+
+    # Declare launch arguments
+    declare_use_sim_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='true',
+        description='Use simulation (Gazebo) clock if true'
+    )
+
+    declare_params_file = DeclareLaunchArgument(
+        'params_file',
+        default_value=PathJoinSubstitution([
+            FindPackageShare('humanoid_navigation'),
+            'config',
+            'humanoid_nav2_params.yaml'
+        ]),
+        description='Full path to the navigation parameters file'
+    )
+
+    # Launch navigation stack
+    nav2_bringup_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            FindPackageShare('nav2_bringup'),
+            '/launch',
+            '/navigation_launch.py'
+        ]),
+        launch_arguments={
+            'use_sim_time': use_sim_time,
+            'params_file': params_file
+        }.items()
+    )
+
+    # Humanoid-specific navigation nodes
+    humanoid_nav_nodes = [
+        Node(
+            package='humanoid_navigation',
+            executable='humanoid_path_planner',
+            name='humanoid_path_planner',
+            parameters=[{'use_sim_time': use_sim_time}],
+            output='screen'
+        ),
+        Node(
+            package='humanoid_navigation',
+            executable='humanoid_controller',
+            name='humanoid_controller',
+            parameters=[{'use_sim_time': use_sim_time}],
+            output='screen'
+        )
+    ]
+
+    # Create launch description
+    ld = LaunchDescription()
+
+    # Add launch arguments
+    ld.add_action(declare_use_sim_time)
+    ld.add_action(declare_params_file)
+
+    # Add navigation bringup
+    ld.add_action(nav2_bringup_launch)
+
+    # Add humanoid-specific nodes
+    for node in humanoid_nav_nodes:
+        ld.add_action(node)
+
+    return ld
+```
+
+## Performance Optimization
+
+### Humanoid Navigation Parameters
+
+Optimize navigation for humanoid performance:
+
+```yaml
+# Humanoid navigation parameters
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0  # Lower frequency for humanoid planning
+    use_sim_time: True
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5  # Larger tolerance for humanoid navigation
+      use_astar: false
+      allow_unknown: true
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 10.0  # Hz for humanoid stepping
+    min_x_velocity_threshold: 0.05
+    min_y_velocity_threshold: 0.05
+    min_theta_velocity_threshold: 0.1
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5  # Larger for humanoid steps
+      movement_time_allowance: 10.0
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.3  # Larger tolerance for humanoid precision
+      yaw_goal_tolerance: 0.3
+      stateful: True
+    bt_simple_navigator:
+      plugin: "nav2_bt_navigator::BtNavigator"
+      expected_loop_rate: 10.0
+      default_bt_xml_filename: "humanoid_navigate_to_pose_w_replanning_and_recovery.xml"
+```
+
+## Hands-on Activity: Humanoid Navigation Implementation
+
+1. Set up a humanoid robot model in Gazebo
+2. Configure Nav2 with humanoid-specific parameters
+3. Implement footstep planning integration
+4. Test navigation in simulation with various obstacles
+5. Adjust parameters for optimal humanoid walking behavior
+6. Evaluate path quality and stability during navigation
+
+## Summary
+
+Adapting Nav2 for bipedal humanoid robots requires specialized consideration of balance, footstep planning, and human-like locomotion patterns. By configuring Nav2 with humanoid-specific parameters and integrating with specialized controllers, we can achieve stable and natural navigation for humanoid robots.
+
+## Next Steps
+
+In the next chapter, we'll explore Vision-Language-Action integration for advanced Physical AI capabilities.

@@ -1,0 +1,511 @@
+---
+sidebar_position: 3
+title: "Bridging Python AI Agents to ROS Controllers with rclpy"
+---
+
+# Lesson 2: Bridging Python AI Agents to ROS Controllers with rclpy
+
+## Overview
+
+This lesson focuses on connecting Python-based AI agents to ROS 2 controllers using rclpy, the Python client library for ROS 2. You'll learn how to create bridges between high-level AI decision-making and low-level robot control systems.
+
+## Learning Objectives
+
+By the end of this lesson, you will be able to:
+- Understand the role of rclpy in ROS 2 Python development
+- Create Python nodes that interface with AI agents
+- Implement message passing between AI agents and robot controllers
+- Design control interfaces for humanoid robot systems
+- Handle real-time constraints in AI-robot communication
+
+## Introduction to rclpy
+
+rclpy is the Python client library for ROS 2, providing the interface between Python programs and the ROS 2 middleware. It enables Python-based AI agents to communicate with other ROS 2 nodes and control robotic systems.
+
+### Key Features of rclpy
+
+1. **Node Management**: Create, configure, and manage ROS 2 nodes in Python
+2. **Message Handling**: Publish and subscribe to messages using Python data structures
+3. **Service Integration**: Create and call services from Python
+4. **Action Support**: Implement action clients and servers for goal-oriented tasks
+5. **Parameter Management**: Handle configuration parameters in Python nodes
+
+## Setting up Python AI Agent Integration
+
+### Basic AI Agent Node Structure
+
+```python
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+import numpy as np
+
+class AIAgentNode(Node):
+    def __init__(self):
+        super().__init__('ai_agent_node')
+
+        # Publishers for sending commands to robot
+        self.cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        # Subscribers for receiving sensor data
+        self.laser_subscriber = self.create_subscription(
+            LaserScan, '/scan', self.laser_callback, 10
+        )
+
+        # AI state variables
+        self.sensor_data = None
+        self.ai_model = self.initialize_ai_model()
+
+        # Timer for AI decision making
+        self.ai_timer = self.create_timer(0.1, self.ai_decision_callback)  # 10Hz
+
+        self.get_logger().info('AI Agent Node initialized')
+
+    def initialize_ai_model(self):
+        """Initialize the AI model (placeholder for actual model)"""
+        # This could be a neural network, rule-based system, or other AI model
+        return {"initialized": True, "model_type": "placeholder"}
+
+    def laser_callback(self, msg):
+        """Process laser scan data from robot"""
+        self.sensor_data = {
+            'ranges': np.array(msg.ranges),
+            'intensities': np.array(msg.intensities),
+            'angle_min': msg.angle_min,
+            'angle_max': msg.angle_max,
+            'angle_increment': msg.angle_increment
+        }
+
+    def ai_decision_callback(self):
+        """Main AI decision making loop"""
+        if self.sensor_data is not None:
+            # Process sensor data through AI model
+            action = self.make_decision(self.sensor_data)
+
+            # Convert AI decision to robot command
+            cmd_vel = self.convert_action_to_command(action)
+
+            # Publish command to robot
+            self.cmd_vel_publisher.publish(cmd_vel)
+
+    def make_decision(self, sensor_data):
+        """AI decision making logic"""
+        # Placeholder: Simple obstacle avoidance
+        min_distance = np.min(sensor_data['ranges'])
+
+        if min_distance < 0.5:  # Obstacle within 0.5m
+            return {"linear": 0.0, "angular": 0.5}  # Turn right
+        else:
+            return {"linear": 0.5, "angular": 0.0}  # Move forward
+
+    def convert_action_to_command(self, action):
+        """Convert AI action to Twist command"""
+        cmd_vel = Twist()
+        cmd_vel.linear.x = action["linear"]
+        cmd_vel.angular.z = action["angular"]
+        return cmd_vel
+```
+
+## Advanced AI Integration Patterns
+
+### Stateful AI Agent with Memory
+
+```python
+from collections import deque
+import pickle
+
+class StatefulAIAgentNode(Node):
+    def __init__(self):
+        super().__init__('stateful_ai_agent_node')
+
+        # Publishers and subscribers
+        self.cmd_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.sensor_sub = self.create_subscription(
+            LaserScan, '/scan', self.sensor_callback, 10
+        )
+
+        # AI state management
+        self.action_history = deque(maxlen=100)  # Keep last 100 actions
+        self.state_history = deque(maxlen=100)   # Keep last 100 states
+        self.current_state = {}
+
+        # AI decision timer
+        self.ai_timer = self.create_timer(0.05, self.stateful_decision_callback)  # 20Hz
+
+        self.get_logger().info('Stateful AI Agent Node initialized')
+
+    def sensor_callback(self, msg):
+        """Update current state with sensor data"""
+        self.current_state = {
+            'timestamp': self.get_clock().now().nanoseconds,
+            'laser_data': msg.ranges,
+            'robot_pose': self.get_robot_pose()  # Would interface with TF2
+        }
+
+    def stateful_decision_callback(self):
+        """Make decisions based on current state and history"""
+        if not self.current_state:
+            return
+
+        # Add current state to history
+        self.state_history.append(self.current_state.copy())
+
+        # Make decision based on current state and history
+        action = self.make_stateful_decision(self.current_state, list(self.state_history))
+
+        # Execute action
+        cmd_vel = self.convert_action_to_command(action)
+        self.cmd_publisher.publish(cmd_vel)
+
+        # Add action to history
+        self.action_history.append(action)
+
+    def make_stateful_decision(self, current_state, state_history):
+        """Make decision based on current state and historical context"""
+        # Example: Avoid locations where robot got stuck before
+        if len(state_history) > 10:
+            recent_positions = [state.get('robot_pose', {}) for state in state_history[-10:]]
+            # Implement logic to avoid previously problematic areas
+            pass
+
+        # Implement more sophisticated stateful decision logic here
+        return {"linear": 0.3, "angular": 0.0}
+```
+
+## Integration with Popular AI Libraries
+
+### TensorFlow/Keras Integration
+
+```python
+import tensorflow as tf
+from std_msgs.msg import Float32MultiArray
+
+class TensorFlowAIAgentNode(Node):
+    def __init__(self):
+        super().__init__('tf_ai_agent_node')
+
+        # Load pre-trained model
+        self.model = self.load_model()
+
+        # Publishers and subscribers
+        self.observation_sub = self.create_subscription(
+            Float32MultiArray, '/robot_observation', self.observation_callback, 10
+        )
+        self.action_pub = self.create_publisher(Float32MultiArray, '/robot_action', 10)
+
+        # Decision making timer
+        self.inference_timer = self.create_timer(0.033, self.run_inference)  # ~30Hz
+
+    def load_model(self):
+        """Load pre-trained TensorFlow model"""
+        try:
+            # Load a saved model
+            model = tf.keras.models.load_model('/path/to/saved/model')
+            self.get_logger().info('TensorFlow model loaded successfully')
+            return model
+        except Exception as e:
+            self.get_logger().error(f'Failed to load model: {e}')
+            return None
+
+    def observation_callback(self, msg):
+        """Receive observation from robot sensors"""
+        self.current_observation = np.array(msg.data).reshape(1, -1)  # Reshape for model
+
+    def run_inference(self):
+        """Run model inference and publish action"""
+        if self.current_observation is not None and self.model is not None:
+            # Run inference
+            action_probs = self.model.predict(self.current_observation, verbose=0)
+
+            # Convert to action
+            action_msg = Float32MultiArray()
+            action_msg.data = action_probs.flatten().tolist()
+
+            # Publish action
+            self.action_pub.publish(action_msg)
+```
+
+### PyTorch Integration
+
+```python
+import torch
+import torch.nn as nn
+
+class PyTorchAIAgentNode(Node):
+    def __init__(self):
+        super().__init__('pytorch_ai_agent_node')
+
+        # Load PyTorch model
+        self.model = self.load_pytorch_model()
+
+        # Publishers and subscribers
+        self.observation_sub = self.create_subscription(
+            Float32MultiArray, '/robot_observation', self.observation_callback, 10
+        )
+        self.action_pub = self.create_publisher(Float32MultiArray, '/robot_action', 10)
+
+        # Decision making timer
+        self.inference_timer = self.create_timer(0.033, self.run_pytorch_inference)
+
+    def load_pytorch_model(self):
+        """Load pre-trained PyTorch model"""
+        try:
+            # Load model state dictionary
+            model = YourRobotModel()  # Your custom model class
+            model.load_state_dict(torch.load('/path/to/model.pth'))
+            model.eval()  # Set to evaluation mode
+            self.get_logger().info('PyTorch model loaded successfully')
+            return model
+        except Exception as e:
+            self.get_logger().error(f'Failed to load PyTorch model: {e}')
+            return None
+
+    def observation_callback(self, msg):
+        """Receive observation and convert to PyTorch tensor"""
+        observation_array = np.array(msg.data, dtype=np.float32)
+        self.current_observation = torch.from_numpy(observation_array).unsqueeze(0)
+
+    def run_pytorch_inference(self):
+        """Run PyTorch model inference"""
+        if self.current_observation is not None and self.model is not None:
+            with torch.no_grad():  # Disable gradient computation for inference
+                action_tensor = self.model(self.current_observation)
+                action_numpy = action_tensor.numpy()
+
+            # Publish action
+            action_msg = Float32MultiArray()
+            action_msg.data = action_numpy.flatten().tolist()
+            self.action_pub.publish(action_msg)
+```
+
+## Real-time Performance Considerations
+
+### Managing Computational Load
+
+```python
+import time
+from threading import Thread, Lock
+
+class RealTimeAIAgentNode(Node):
+    def __init__(self):
+        super().__init__('realtime_ai_agent_node')
+
+        # Publishers and subscribers
+        self.cmd_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.sensor_sub = self.create_subscription(
+            LaserScan, '/scan', self.sensor_callback, 10
+        )
+
+        # Threading for heavy computation
+        self.sensor_data_lock = Lock()
+        self.current_sensor_data = None
+        self.ai_action = Twist()
+
+        # Separate thread for AI computation
+        self.ai_thread = Thread(target=self.ai_computation_loop, daemon=True)
+        self.ai_thread.start()
+
+        # High-frequency command publishing
+        self.cmd_timer = self.create_timer(0.01, self.publish_command)  # 100Hz
+
+    def sensor_callback(self, msg):
+        """Update sensor data with thread safety"""
+        with self.sensor_data_lock:
+            self.current_sensor_data = msg
+
+    def ai_computation_loop(self):
+        """Run AI computations in separate thread"""
+        while rclpy.ok():
+            start_time = time.time()
+
+            # Get sensor data safely
+            with self.sensor_data_lock:
+                if self.current_sensor_data is not None:
+                    sensor_copy = self.current_sensor_data
+
+            # Run AI computation
+            if 'sensor_copy' in locals():
+                action = self.compute_ai_action(sensor_copy)
+
+                # Update action with thread safety
+                with self.sensor_data_lock:
+                    self.ai_action = action
+
+            # Maintain target frequency
+            elapsed = time.time() - start_time
+            sleep_time = max(0, 0.05 - elapsed)  # Target 20Hz
+            time.sleep(sleep_time)
+
+    def compute_ai_action(self, sensor_data):
+        """Compute AI action (runs in separate thread)"""
+        # Complex AI computation here
+        cmd_vel = Twist()
+        # ... computation logic ...
+        return cmd_vel
+
+    def publish_command(self):
+        """Publish command at high frequency"""
+        with self.sensor_data_lock:
+            cmd_to_publish = self.ai_action
+
+        self.cmd_publisher.publish(cmd_to_publish)
+```
+
+## Humanoid Robot Controller Interface
+
+### Humanoid-Specific Control Patterns
+
+```python
+from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
+
+class HumanoidControllerBridge(Node):
+    def __init__(self):
+        super().__init__('humanoid_controller_bridge')
+
+        # Publishers for humanoid joints
+        self.joint_trajectory_pub = self.create_publisher(
+            JointTrajectory, '/joint_trajectory_controller/joint_trajectory', 10
+        )
+
+        # Subscribers for high-level commands
+        self.ai_command_sub = self.create_subscription(
+            String, '/ai_command', self.ai_command_callback, 10
+        )
+
+        # Current joint state (for feedback)
+        self.current_joint_state = None
+        self.joint_state_sub = self.create_subscription(
+            JointState, '/joint_states', self.joint_state_callback, 10
+        )
+
+    def ai_command_callback(self, msg):
+        """Process high-level AI commands and convert to joint trajectories"""
+        command = msg.data
+
+        if command == "walk_forward":
+            trajectory = self.create_walk_trajectory()
+        elif command == "turn_left":
+            trajectory = self.create_turn_trajectory(left=True)
+        elif command == "raise_arm":
+            trajectory = self.create_arm_trajectory()
+        else:
+            self.get_logger().warn(f'Unknown command: {command}')
+            return
+
+        # Publish trajectory
+        self.joint_trajectory_pub.publish(trajectory)
+
+    def create_walk_trajectory(self):
+        """Create walking trajectory for humanoid"""
+        trajectory = JointTrajectory()
+        trajectory.joint_names = [
+            'left_hip', 'left_knee', 'left_ankle',
+            'right_hip', 'right_knee', 'right_ankle',
+            'left_shoulder', 'left_elbow',
+            'right_shoulder', 'right_elbow'
+        ]
+
+        # Create trajectory points for walking motion
+        points = []
+
+        # Example: Simple 4-point walking gait
+        for i in range(4):
+            point = JointTrajectoryPoint()
+
+            # Calculate joint positions for this phase of walking
+            joint_positions = self.calculate_walk_phase(i)
+            point.positions = joint_positions
+
+            # Set timing
+            point.time_from_start = Duration(sec=0, nanosec=int((i + 1) * 250000000))  # 250ms per phase
+            points.append(point)
+
+        trajectory.points = points
+        return trajectory
+
+    def calculate_walk_phase(self, phase):
+        """Calculate joint positions for walking phase"""
+        # This would implement the actual inverse kinematics for walking
+        # For now, returning placeholder values
+        return [0.0] * 10  # 10 joints
+
+    def joint_state_callback(self, msg):
+        """Update current joint state"""
+        self.current_joint_state = msg
+```
+
+## Error Handling and Safety
+
+### Safe AI-Robot Interface
+
+```python
+class SafeAIAgentInterface(Node):
+    def __init__(self):
+        super().__init__('safe_ai_interface')
+
+        # Publishers and subscribers
+        self.safety_cmd_pub = self.create_publisher(Twist, '/cmd_vel_safety', 10)
+        self.emergency_stop_pub = self.create_publisher(Bool, '/emergency_stop', 10)
+
+        # Safety parameters
+        self.declare_parameter('max_linear_velocity', 1.0)
+        self.declare_parameter('max_angular_velocity', 1.0)
+        self.declare_parameter('safety_timeout', 1.0)
+
+        # Safety monitoring
+        self.last_ai_command_time = self.get_clock().now()
+        self.safety_timer = self.create_timer(0.1, self.safety_check)
+
+    def safety_check(self):
+        """Check for safety violations"""
+        current_time = self.get_clock().now()
+
+        # Check for command timeout
+        time_since_command = (current_time - self.last_ai_command_time).nanoseconds / 1e9
+        if time_since_command > self.get_parameter('safety_timeout').value:
+            self.emergency_stop()
+            self.get_logger().warn('Emergency stop: AI command timeout')
+
+    def validate_command(self, cmd_vel):
+        """Validate and limit robot command"""
+        max_linear = self.get_parameter('max_linear_velocity').value
+        max_angular = self.get_parameter('max_angular_velocity').value
+
+        # Limit linear velocity
+        cmd_vel.linear.x = max(min(cmd_vel.linear.x, max_linear), -max_linear)
+        cmd_vel.linear.y = max(min(cmd_vel.linear.y, max_linear), -max_linear)
+        cmd_vel.linear.z = max(min(cmd_vel.linear.z, max_linear), -max_linear)
+
+        # Limit angular velocity
+        cmd_vel.angular.x = max(min(cmd_vel.angular.x, max_angular), -max_angular)
+        cmd_vel.angular.y = max(min(cmd_vel.angular.y, max_angular), -max_angular)
+        cmd_vel.angular.z = max(min(cmd_vel.angular.z, max_angular), -max_angular)
+
+        return cmd_vel
+
+    def emergency_stop(self):
+        """Send emergency stop command"""
+        stop_cmd = Twist()
+        # Publish stop command to multiple topics if needed
+        self.safety_cmd_pub.publish(stop_cmd)
+```
+
+## Hands-on Activity: AI-ROS Bridge Implementation
+
+1. Create a simple AI agent node that makes basic navigation decisions
+2. Implement the rclpy interface with proper message passing
+3. Connect the AI agent to a simulated robot in Gazebo
+4. Test the AI agent's ability to control the robot based on sensor input
+5. Implement safety features to ensure safe operation
+
+## Summary
+
+Bridging Python AI agents to ROS controllers using rclpy enables sophisticated robot behaviors by connecting high-level AI decision-making with low-level robot control. Understanding these integration patterns is crucial for developing intelligent robotic systems.
+
+## Next Steps
+
+In the next lesson, we'll explore URDF (Unified Robot Description Format) for humanoid robots, which provides the robot description needed for the controllers we've been developing.
