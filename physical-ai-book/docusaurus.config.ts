@@ -68,6 +68,38 @@ const config: Config = {
     ],
   ],
 
+  plugins: [
+    [
+      require.resolve('@cmfcmf/docusaurus-search-local'),
+      {
+        // whether to index docs pages
+        indexDocs: true,
+
+        // Whether to also index the titles of the parent categories in the sidebar of a doc page.
+        // 0 disables this feature.
+        // 1 indexes the direct parent category in the sidebar of a doc page
+        // 2 indexes up to the 2nd nested parent category in the sidebar of a doc page
+        // 3...
+        // etc
+        indexDocSidebarParentCategories: 0,
+
+        // whether to index blog pages
+        indexBlog: true,
+
+        // whether to index static pages
+        // /404.html is never indexed
+        indexPages: false,
+
+        // language of your documentation, see next section
+        language: "en",
+
+        // Setting this to "none" will prevent the default CSS to be included.
+        // This allows for a custom search bar to be rendered in the navbar
+        style: undefined,
+      },
+    ],
+  ],
+
   themeConfig: {
     // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',
@@ -85,9 +117,12 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Tutorial',
+          label: 'Book Chapters',
         },
-        {to: '/blog', label: 'Blog', position: 'left'},
+        {
+          type: 'search',
+          position: 'right',
+        },
         {
           href: 'https://github.com/facebook/docusaurus',
           label: 'GitHub',
@@ -96,40 +131,39 @@ const config: Config = {
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light', // Light footer to complement the blue gradient
       links: [
         {
-          title: 'Docs',
+          title: 'Physical AI Book',
           items: [
             {
-              label: 'Physical AI Book',
+              label: 'Introduction',
               to: '/docs/intro',
             },
+            {
+              label: 'Module 1: The Robotic Nervous System (ROS 2)',
+              to: '/docs/chapter1',
+            },
+            {
+              label: 'Module 2: The Digital Twin (Gazebo & Unity)',
+              to: '/docs/chapter2',
+            },
+            {
+              label: 'Module 3: The AI-Robot Brain (NVIDIA Isaac™)',
+              to: '/docs/chapter3',
+            },
+            {
+              label: 'Module 4: Vision-Language-Action (VLA)',
+              to: '/docs/chapter4',
+            },
           ],
         },
         {
-          title: 'Community',
+          title: 'Resources',
           items: [
             {
-              label: 'Stack Overflow',
-              href: 'https://stackoverflow.com/questions/tagged/docusaurus',
-            },
-            {
-              label: 'Discord',
-              href: 'https://discordapp.com/invite/docusaurus',
-            },
-            {
-              label: 'X',
-              href: 'https://x.com/docusaurus',
-            },
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {
-              label: 'Blog',
-              to: '/blog',
+              label: 'Documentation',
+              to: '/docs/intro',
             },
             {
               label: 'GitHub',
@@ -137,8 +171,21 @@ const config: Config = {
             },
           ],
         },
+        {
+          title: 'Connect',
+          items: [
+            {
+              label: 'GitHub',
+              href: 'https://github.com/facebook/docusaurus',
+            },
+            {
+              label: 'Academic Resources',
+              href: 'https://github.com/facebook/docusaurus',
+            },
+          ],
+        },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Physical AI Book - A Comprehensive Guide to Robotics, AI, and Physical Systems. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,
